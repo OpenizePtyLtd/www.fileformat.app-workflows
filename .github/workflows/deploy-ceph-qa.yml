@@ -1,0 +1,97 @@
+name: PushToCephQA
+
+# Controls when the action will run.
+on:
+  # Triggers the workflow on push events to main branch
+  push:
+    branches: [ main ]
+    paths:
+      - 'content/**'
+      - 'config/**'
+      - 'layouts/**'
+      - 'assets/**'
+      - '.github/workflows/deploy-ceph-qa.yml'
+  
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # Build job - Builds the Hugo site and uploads artifacts
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        repository: OpenizePtyLtd/www.fileformat.app
+        token: ${{ secrets.REPO_TOKEN }}
+        submodules: true  # Fetch Hugo themes
+        fetch-depth: 0    # Fetch all history for .GitInfo and .Lastmod
+
+    - name: Setup Hugo
+      uses: peaceiris/actions-hugo@v2
+      with:
+          hugo-version: '0.125.7'
+          extended: true
+
+    - name: Install Dependencies
+      run: |
+        npm install -D --save autoprefixer
+        npm install -D --save postcss-cli
+
+    - name: Build Site
+      run: hugo --config "./config/config-ceph-fileformat-app.toml" --minify 
+
+    - name: Generate Build Info
+      run: |
+        mkdir -p public
+        cat > public/build-info.txt << 'EOF'
+        Branch: ${{ github.ref_name }}
+        Commit: ${{ github.sha }}
+        Author: ${{ github.actor }}
+        Datetime: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        EOF
+
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: public-files
+        path: public/
+        retention-days: 5
+
+  # Deploy job - Deploys the built site to Ceph
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        repository: OpenizePtyLtd/www.fileformat.app
+        token: ${{ secrets.REPO_TOKEN }}
+        submodules: true  # Fetch Hugo themes
+        fetch-depth: 0    # Fetch all history for .GitInfo and .Lastmod
+
+    - name: Setup Hugo
+      uses: peaceiris/actions-hugo@v2
+      with:
+          hugo-version: '0.125.7'
+          extended: true
+
+    - name: Download Build Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: public-files
+        path: public/
+
+    - name: Deploy to Ceph QA
+      run: |
+        hugo --config "./config/config-ceph-fileformat-app.toml" deploy --target staging-ceph --force --maxDeletes -1
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.CEPH_ACCESS_KEY_QA }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.CEPH_SECRET_KEY_QA }}
