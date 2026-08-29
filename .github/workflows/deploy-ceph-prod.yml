@@ -1,8 +1,6 @@
 name: PushToCephProduction
 
-# Controls when the action will run.
 on:
-  # Triggers the workflow on push events to main branch
   push:
     branches: [ main ]
     paths:
@@ -11,31 +9,26 @@ on:
       - 'layouts/**'
       - 'assets/**'
       - '.github/workflows/deploy-ceph-prod.yml'
-  
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # Build job - Builds the Hugo site and uploads artifacts
-  build:
+  deploy:
     runs-on: ubuntu-latest
-    
-    steps:
 
+    steps:
     - name: Checkout
       uses: actions/checkout@v4
       with:
         repository: OpenizePtyLtd/www.fileformat.app
         token: ${{ secrets.REPO_TOKEN }}
-        submodules: true  # Fetch Hugo themes
-        fetch-depth: 0    # Fetch all history for .GitInfo and .Lastmod
+        submodules: true
+        fetch-depth: 0
 
     - name: Setup Hugo
       uses: peaceiris/actions-hugo@v2
       with:
-          hugo-version: '0.125.7'
-          extended: true
+        hugo-version: '0.125.7'
+        extended: true
 
     - name: Install Dependencies
       run: |
@@ -43,7 +36,7 @@ jobs:
         npm install -D --save postcss-cli
 
     - name: Build Site
-      run: hugo --config "./config/config-ceph-fileformat-app.toml" --minify 
+      run: hugo --config "./config/config-ceph-fileformat-app.toml" --environment production --minify --cleanDestinationDir
 
     - name: Generate Build Info
       run: |
@@ -55,43 +48,16 @@ jobs:
         Datetime: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
         EOF
 
-    - name: Upload Build Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: public-files
-        path: public/
-        retention-days: 5
-
-  # Deploy job - Deploys the built site to Ceph
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    
-    steps:
-
-    - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        repository: OpenizePtyLtd/www.fileformat.app
-        token: ${{ secrets.REPO_TOKEN }}
-        submodules: true  # Fetch Hugo themes
-        fetch-depth: 0    # Fetch all history for .GitInfo and .Lastmod
-
-    - name: Setup Hugo
-      uses: peaceiris/actions-hugo@v2
-      with:
-          hugo-version: '0.125.7'
-          extended: true
-
-    - name: Download Build Artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: public-files
-        path: public/
-
     - name: Deploy to Ceph Production
       run: |
-        hugo --config "./config/config-ceph-fileformat-app.toml" deploy --target production-ceph --force --maxDeletes -1
+        hugo --config "./config/config-ceph-fileformat-app.toml" deploy --target production-ceph --environment production --maxDeletes -1 --verbose
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.CEPH_ACCESS_KEY }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.CEPH_SECRET_KEY }}
+
+    - name: Purge Bunny CDN cache
+      env:
+        BUNNYNET_ACCESSKEY: ${{ secrets.BUNNYNET_ACCESSKEY }}
+      run: |
+        echo Purging https://www.fileformat.app
+        curl -siG -H "X-Api-Key: $BUNNYNET_ACCESSKEY" --data-urlencode "url=https://www.fileformat.app/*" "https://api.dynabic.com/bn/purge?async=true"
